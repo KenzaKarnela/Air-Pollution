@@ -1,0 +1,197 @@
+---
+title: "Unsupervised_PCA_Airpolution"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(corrplot)
+library(ggbiplot)
+library(ggplot2)
+library(MVA)
+library(HSAUR2,quietly = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+dk = USairpollution
+head(dk)
+nrow(dk)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+# density plots
+library(GGally)
+ggpairs(dk[,-1])
+#manu & popul are strongly right skewed, it is an evidence that there are some outliers.
+```
+
+```{r}
+# density plots
+boxplot(dk)
+#We can see that Manufacturing and Population have some notable outliers, let’s find those outliers and remove them.
+```
+
+```{r}
+# Outliers for Manufacturing
+boxplot.stats(dk$manu)$out
+
+# Outliers for Population
+boxplot.stats(dk$popul)$out
+
+out_Manu<-boxplot.stats(dk$manu)$out
+out_Popul<-boxplot.stats(dk$popul)$out
+
+out_ind1 <- which(dk$manu %in% max(c(out_Manu)))
+out_ind2 <- which(dk$popul %in% max(c(out_Popul)))
+```
+
+```{r}
+# Let;s find out which is cities are outliers
+dk[out_ind1,]
+dk[out_ind2,]
+outs <- c(out_ind1,out_ind2)
+```
+
+```{r}
+#removeoutliers
+dk<- dk[-outs,]
+boxplot(dk)
+ggpairs(dk[,-1])
+```
+
+```{r}
+#Covariance Matrix Analysis
+S_dk <- var(dk[,-1])
+round(S_dk,2)
+#Population and Manufacturing have higher variance compared to other variables, so the data needs to be scaled
+#bcsvariables are on very different scale or have very different variances, a PCA of the data should be performed on the Correlation Matrix.
+```
+
+```{r}
+#Correlation Matrix Analysis
+C_dk <- cor(dk[,-1])
+corrplot((C_dk) , method = "number")
+#manu and popul highly correlated
+```
+
+```{r}
+#PC Analysis
+#Eigen Values
+eig_dk<- eigen(C_dk)
+round(eig_dk$values,2)
+round(eig_dk$values/sum(eig_dk$values),3)
+#First three eigen values are greater than one and together account for almost %85 of the variance of the original variables.
+
+```
+
+```{r}
+#Scree plot
+#perform PCA
+results_dk <- prcomp(dk, scale = TRUE)
+#calculate total variance explained by each principal component
+var_explained_dk = results_dk$sdev^2 / sum(results_dk$sdev^2)
+
+qplot(c(1:7), var_explained_dk) + 
+  geom_line() + 
+  xlab("Principal Component") + 
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 1)
+#Scree plot do not give me an elbow(breaking) point
+```
+
+```{r}
+# PCA with standardizing
+dk.pc = princomp(dk[,-1],cor=TRUE)
+summary(dk.pc,loadings=T)
+#The first component might be regarded about the life condition, because manufacturing and population has higher coefficient indicating relatively poor environment.
+#The second component is discloses information about rainfall status in cities.
+#The third component has high values in Temperature and Precipitation days with opposite directions. So, this component gives an idea about the weather condition
+```
+
+```{r}
+ggbiplot(dk.pc)
+#We can notice that population & manufacturing and precipitation days& precipitation have same direction, it is a sign that thay both are correlated to each other.
+#tamp has opposite direction with temp and precipitation days, so is is a sign thta they are negatively correlated each other.
+
+ggbiplot(dk.pc,labels = rownames(dk.pc$scores))
+#This plot shows that Philadelphia and Detroit may have the most SO2 level due to effect of manufacturing and population.
+#It looks Buffalo and Seatle are the cities who have the most precipitation days. Cleveland, Milwaukee and Minnesota are the windy cities and Salt Lake City is the city with the lowest humidity.
+
+
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(dk$SO2~dk.pc$scores[,1],xlab="PC1",ylab="SO2", pch=19)
+abline(lm(dk$SO2~ dk.pc$scores[,1]), col="red")
+plot(dk$SO2~dk.pc$scores[,2],xlab="PC2",ylab="SO2",pch=19)
+abline(lm(dk$SO2~ dk.pc$scores[,2]), col="red")
+plot(dk$SO2~dk.pc$scores[,3],xlab="PC3",ylab="SO2",pch=19)
+abline(lm(dk$SO2~ dk.pc$scores[,3]), col="red")
+plot(dk$SO2~dk.pc$scores[,4],xlab="PC4",ylab="SO2",pch=19)
+abline(lm(dk$SO2~ dk.pc$scores[,4]), col="red")
+#We can use PC scores to determine which Principal components are best predictors of the SO2 levels in the air.
+#In this score plot, we can notice that PC3 has no correlation with SO2 level. We called PC3 as a weather component,this component is not a good predictor.
+```
+
+```{r}
+summary(lm(dk$SO2~ dk.pc$scores))
+#Except the third component, the other components are good predictor of response variable (SO2).
+#Specifically, the first principal component is the most predictive of SO2.But it is clear that components with small variance such as the fourth component also have correlation with the response.
+```
+
+```{r}
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+```
+
+```{r}
+set.seed(123)
+
+# function to compute total within-cluster sum of square 
+wss_cluster <- function(k) {
+  kmeans(dk$SO2, k, nstart = 10 )$tot.withinss
+}
+
+# Compute and plot wss for k = 1 to k = 15
+k.values.cluster <- 1:15
+
+# extract wss for 2-15 clusters
+wss_cluster_values <- map_dbl(k.values.cluster, wss_cluster)
+
+plot(k.values.cluster, wss_cluster_values,
+       type="b", pch = 19, frame = FALSE, 
+       xlab="Number of clusters K",
+       ylab="Total within-clusters sum of squares")
+
+#The results suggest that 3 or 4 is the optimal number of clusters as it appears to be the bend in the knee (or elbow)
+```
+
+```{r}
+# Compute k-means clustering with k = 3
+set.seed(123)
+final <- kmeans(dk$SO2, 3, nstart = 25)
+print(final)
+```
+
+```{r}
+fviz_cluster(final, data = dk)
+```
+
+```{r}
+dk_SO2=dk[1]
+dk_SO2 %>%
+  mutate(Cluster = final$cluster) %>%
+  group_by(Cluster) %>%
+  summarise_all("mean")
+#cluster 2 has the highest mean (highest air pollution)
+```
